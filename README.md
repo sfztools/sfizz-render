@@ -2,15 +2,15 @@
 
 ## Building and installing
 
-You should build this repository from source.
-It uses the FetchContent addon to CMake and thus it requires a connection to various git repositories on the configure step.
-It requires the `sndfile` library; on Debian-based systems, you can install `libsndfile1-dev`.
+`sfizz-render` requires the `sndfile` library ; on Debian-based systems, you can install `libsndfile1-dev`.
+It also requires `sfizz` installed as a shared library.
+On Arch you have AUR packages available for this, or install it from source following the information in (https://github.com/sfztools/sfizz).
 To build the release from source use
 ```
-cmake -DCMAKE_BUILD_TYPE=Release ..
+git clone --recursive https://github.com/sfztools/sfizz-render.git
+cd sfizz-render
 make
 ```
-Eventually you can use `sudo make install` to install the binary.
 
 ## Usage
 
@@ -27,15 +27,19 @@ sfizz-render --wav wav_file.wav --sfz sfz_file.sfz --midi midi_file.mid
 
 The complete list of command line options is:
 ```
-sfizz-render: Render a midi file through an SFZ file using the sfizz library.
+Render a midi file through an SFZ file using the sfizz library.
+Usage:
+  sfizz-render [OPTION...]
 
-  Flags from home/paul/source/midi-sfizz/main.cpp:
-    -midi (Output wav file); default: "";
-    -wav (Output wav file); default: "";
-    -sfz (Internal oversampling factor); default: "";
-    -oversampling (Internal oversampling factor); default: "x1";
-    -blocksize (Block size for the sfizz callbacks); default: 1024;
-    -samplerate (Output sample rate); default: 48000;
-    -track (Track number to use); default: -1;
-    -verbose (Verbose output); default: false;
+      --sfz arg           SFZ file
+      --midi arg          Input midi file
+      --wav arg           Output wav file
+  -b, --blocksize arg     Block size for the sfizz callbacks
+  -s, --samplerate arg    Output sample rate
+  -t, --track arg         Track number to use
+      --oversampling arg  Internal oversampling factor
+  -v, --verbose           Verbose output
+      --use-eot           End the rendering at the last End of Track Midi
+                          message
+  -h, --help              Show help
 ```

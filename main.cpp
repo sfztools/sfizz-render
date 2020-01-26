@@ -21,56 +21,97 @@
 // (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
 // SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-#include "sfizz/Synth.h"
+#include <sfizz.hpp>
 #include <sndfile.hh>
 #include "MidiFile.h"
-#include "absl/flags/parse.h"
-#include "absl/flags/flag.h"
-#include "absl/flags/usage.h"
-#include "ghc/filesystem.hpp"
+#include "cxxopts.hpp"
+#include <filesystem>
 #include <iostream>
+#define LOG_ERROR(ostream) std::cerr  << ostream << '\n'
+#define LOG_INFO(ostream) if (verbose) { std::cout << ostream << '\n'; }
+
+namespace fs = std::filesystem;
 
 constexpr int buildAndCenterPitch(uint8_t firstByte, uint8_t secondByte)
 {
     return (int)(((unsigned int)secondByte << 7) + (unsigned int)firstByte) - 8192;
 }
 
-ABSL_FLAG(std::string, oversampling, "x1", "Internal oversampling factor");
-ABSL_FLAG(int, blocksize, 1024, "Block size for the sfizz callbacks");
-ABSL_FLAG(int, samplerate, 48000, "Output sample rate");
-ABSL_FLAG(int, track, -1, "Track number to use");
-ABSL_FLAG(std::string, sfz, "", "SFZ file");
-ABSL_FLAG(std::string, wav, "", "Output wav file");
-ABSL_FLAG(std::string, midi, "", "Input midi file");
-ABSL_FLAG(bool, verbose, false, "Verbose output");
+float meanSquared(const std::vector<float>& array)
+{
+    float power = 0;
+    for (auto& value: array)
+        power += value * value;
+    power /= array.size();
+    return power;
+}
+
+void writeInterleaved(const std::vector<float>& left, const std::vector<float>& right, std::vector<float>& output)
+{
+    const auto inputSamples = std::min(left.size(), right.size());
+    const auto numSamples = std::min(inputSamples, output.size() / 2);
+    for (size_t i = 0; i < numSamples; ++i) {
+        output[2*i] = left[i];
+        output[2*i+1] = right[i];
+    }
+}
 
 int main(int argc, char** argv)
 {
-    absl::SetProgramUsageMessage("Render a midi file through an SFZ file using the sfizz library.");
-    [[maybe_unused]] auto params = absl::ParseCommandLine(argc, argv);
+    cxxopts::Options options("sfizz-render", "Render a midi file through an SFZ file using the sfizz library.");
 
-    const auto verbose = absl::GetFlag(FLAGS_verbose);
-#define LOG_ERROR(ostream) std::cerr  << ostream << '\n'
-#define LOG_INFO(ostream) if (verbose) { std::cout << ostream << '\n'; }
+    int blockSize { 1024 };
+    int sampleRate { 48000 };
+    int trackNumber { -1 };
+    bool verbose { false };
+    bool help { false };
+    bool useEOT { false };
+    int oversampling { 1 };
 
-    if (absl::GetFlag(FLAGS_sfz).empty()) {
-        LOG_ERROR("Please specify an SFZ file using --sfz");
+    options.add_options()
+        ("sfz", "SFZ file", cxxopts::value<std::string>())
+        ("midi", "Input midi file", cxxopts::value<std::string>())
+        ("wav", "Output wav file", cxxopts::value<std::string>())
+        ("b,blocksize", "Block size for the sfizz callbacks", cxxopts::value(blockSize))
+        ("s,samplerate", "Output sample rate", cxxopts::value(sampleRate))
+        ("t,track", "Track number to use", cxxopts::value(trackNumber))
+        ("oversampling", "Internal oversampling factor", cxxopts::value(oversampling))
+        ("v,verbose", "Verbose output", cxxopts::value(verbose))
+        ("use-eot", "End the rendering at the last End of Track Midi message", cxxopts::value(useEOT))
+        ("h,help", "Show help", cxxopts::value(help))
+    ;
+    auto params = [&]() {
+        try { return options.parse(argc, argv); }
+        catch (std::exception& e) { 
+            LOG_ERROR(e.what());
+            std::exit(-1);
+        }
+    }();
+
+    if (help) {
+        std::cout << options.help();
+        std::exit(0);
+    }
+
+
+    if (params.count("sfz") != 1) {
+        LOG_ERROR("Please specify a single SFZ file using --sfz");
         std::exit(-1);
     }
 
-    if (absl::GetFlag(FLAGS_wav).empty()) {
+    if (params.count("wav") != 1) {
         LOG_ERROR("Please specify an output file using --wav");
         std::exit(-1);
     }
 
-    if (absl::GetFlag(FLAGS_midi).empty()) {
+    if (params.count("midi") != 1) {
         LOG_ERROR("Please specify a MIDI file using --midi");
         std::exit(-1);
     }
 
-    fs::path sfzPath  = fs::current_path() / absl::GetFlag(FLAGS_sfz);
-    fs::path outputPath  = fs::current_path() / absl::GetFlag(FLAGS_wav);
-    fs::path midiPath  = fs::current_path() / absl::GetFlag(FLAGS_midi);
+    fs::path sfzPath  = fs::current_path() / params["sfz"].as<std::string>();
+    fs::path outputPath  = fs::current_path() / params["wav"].as<std::string>();
+    fs::path midiPath  = fs::current_path() / params["midi"].as<std::string>();
 
     if (!fs::exists(sfzPath) || !fs::is_regular_file(sfzPath)) {
         LOG_ERROR("SFZ file " << sfzPath.string() << " does not exist or is not a regular file");
@@ -86,53 +127,30 @@ int main(int argc, char** argv)
         LOG_INFO("Output file " << outputPath.string() << " already exists and will be erased.");
     }
 
-    const auto oversampling = absl::GetFlag(FLAGS_oversampling);
-    const auto factor = [&]() {
-        if (oversampling == "x1") return sfz::Oversampling::x1;
-        if (oversampling == "x2") return sfz::Oversampling::x2;
-        if (oversampling == "x4") return sfz::Oversampling::x4;
-        if (oversampling == "x8") return sfz::Oversampling::x8;
-
-        LOG_ERROR("Unknown oversampling factor " << oversampling);
-        std::exit(-1);
-
-        return sfz::Oversampling::x1;
-    }();
-
     LOG_INFO("SFZ file:    " << sfzPath.string());
     LOG_INFO("MIDI file:   " << midiPath.string());
     LOG_INFO("Output file: " << outputPath.string());
-    switch(factor) {
-    case sfz::Oversampling::x1:
-        LOG_INFO("Oversampling factor: " << "x1");
-        break;
-    case sfz::Oversampling::x2:
-        LOG_INFO("Oversampling factor: " << "x2");
-        break;
-    case sfz::Oversampling::x4:
-        LOG_INFO("Oversampling factor: " << "x4");
-        break;
-    case sfz::Oversampling::x8:
-        LOG_INFO("Oversampling factor: " << "x8");
-        break;
-    }
-    const auto blockSize = absl::GetFlag(FLAGS_blocksize);
     LOG_INFO("Block size: " << blockSize);
-
-    const auto sampleRate = absl::GetFlag(FLAGS_samplerate);
     LOG_INFO("Sample rate: " << sampleRate);
  
-    sfz::Synth synth;
+    sfz::Sfizz synth;
     synth.setSamplesPerBlock(blockSize);
     synth.setSampleRate(sampleRate);
     synth.enableFreeWheeling();
+    
+    if (!synth.setOversamplingFactor(oversampling)) {
+        LOG_ERROR("Bad oversampling factor: " << oversampling);
+        std::exit(-1);
+    }
+    LOG_INFO("Oversampling factor: " << oversampling);
+
+    
     if (!synth.loadSfzFile(sfzPath)) {
         LOG_ERROR("There was an error loading the SFZ file.");
         std::exit(-1);
     }
     LOG_INFO(synth.getNumRegions() << " regions in the SFZ.");
 
-    const auto trackNumber = absl::GetFlag(FLAGS_track);
     smf::MidiFile midiFile { midiPath.string() };
     LOG_INFO(midiFile.getNumTracks() << " tracks in the SMF.");
     if (trackNumber > midiFile.getNumTracks()) {
@@ -144,6 +162,10 @@ int main(int argc, char** argv)
         midiFile.joinTracks();
     } else {
         LOG_INFO("-- Rendering only track number " <<  trackNumber);
+    }
+
+    if (useEOT) {
+        LOG_INFO("-- Cutting the rendering at the last MIDI End of Track message");
     }
     
     const auto trackIdx = trackNumber < 1 ? 0 : trackNumber - 1;
@@ -162,19 +184,21 @@ int main(int argc, char** argv)
     double blockStartTime { 0 };
     double blockSizeInSeconds { blockSize / sampleRateDouble };
     int numFramesWritten { 0 };
-    sfz::AudioBuffer<float> buffer (2, blockSize);
-    sfz::Buffer<float> interleavedBuffer (2 * blockSize);
+    std::vector<float> leftBuffer (blockSize);
+    std::vector<float> rightBuffer (blockSize);
+    std::vector<float> interleavedBuffer (2 * blockSize);
 
-    auto leftSpan = buffer.getSpan(0);
-    auto rightSpan = buffer.getSpan(1);
-    auto interleavedSpan = absl::MakeSpan(interleavedBuffer);
+    std::array outputBuffers { leftBuffer.data(), rightBuffer.data() };
+
     while (evIdx < midiFile.getNumEvents(trackIdx)) {
         const auto midiEvent = midiFile.getEvent(trackIdx, evIdx);
         const auto sampleIndex = static_cast<int>(midiEvent.seconds * sampleRateDouble);
         if (sampleIndex > nextBlockSentinel) {
-            synth.renderBlock(buffer);
-            sfz::writeInterleaved<float>(leftSpan, rightSpan, interleavedSpan);
-            numFramesWritten += outputFile.writef(interleavedSpan.data(), blockSize);
+            synth.renderBlock(outputBuffers.data(), blockSize);
+            
+            writeInterleaved(leftBuffer, rightBuffer, interleavedBuffer);
+
+            numFramesWritten += outputFile.writef(interleavedBuffer.data(), blockSize);
             // Avoid absorption, if any, by keeping the counter integer until the end
             blockStartTime = static_cast<double>(nextBlockSentinel) / sampleRateDouble; 
             nextBlockSentinel += blockSize;
@@ -200,14 +224,16 @@ int main(int argc, char** argv)
         }
     }
 
-    auto averagePower = sfz::meanSquared<float>(interleavedBuffer);
-    while (averagePower > 1e-12f || nextBlockSentinel == blockSize) {
-        synth.renderBlock(buffer);
-        sfz::writeInterleaved<float>(leftSpan, rightSpan, interleavedSpan);
-        numFramesWritten += outputFile.writef(interleavedSpan.data(), blockSize);
-        blockStartTime = static_cast<double>(nextBlockSentinel) / sampleRateDouble; 
-        nextBlockSentinel += blockSize;
-        averagePower = sfz::meanSquared<float>(interleavedBuffer);
+    if (!useEOT) {
+        auto averagePower = meanSquared(interleavedBuffer);
+        while (averagePower > 1e-12f || nextBlockSentinel == blockSize) {
+            synth.renderBlock(outputBuffers.data(), blockSize);
+            writeInterleaved(leftBuffer, rightBuffer, interleavedBuffer);
+            numFramesWritten += outputFile.writef(interleavedBuffer.data(), blockSize);
+            blockStartTime = static_cast<double>(nextBlockSentinel) / sampleRateDouble; 
+            nextBlockSentinel += blockSize;
+            averagePower = meanSquared(interleavedBuffer);
+        }
     }
 
     outputFile.writeSync();

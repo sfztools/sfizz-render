@@ -39,9 +39,9 @@ ABSL_FLAG(std::string, oversampling, "x1", "Internal oversampling factor");
 ABSL_FLAG(int, blocksize, 1024, "Block size for the sfizz callbacks");
 ABSL_FLAG(int, samplerate, 48000, "Output sample rate");
 ABSL_FLAG(int, track, -1, "Track number to use");
-ABSL_FLAG(std::string, sfz, "", "Internal oversampling factor");
+ABSL_FLAG(std::string, sfz, "", "SFZ file");
 ABSL_FLAG(std::string, wav, "", "Output wav file");
-ABSL_FLAG(std::string, midi, "", "Output wav file");
+ABSL_FLAG(std::string, midi, "", "Input midi file");
 ABSL_FLAG(bool, verbose, false, "Verbose output");
 
 int main(int argc, char** argv)

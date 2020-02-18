@@ -1,4 +1,4 @@
-// Copyright (c) 2019, Paul Ferrand
+// Copyright (c) 2019-2020, Paul Ferrand
 // All rights reserved.
 
 // Redistribution and use in source and binary forms, with or without
@@ -66,6 +66,7 @@ int main(int argc, char** argv)
     bool verbose { false };
     bool help { false };
     bool useEOT { false };
+    bool log { false };
     int oversampling { 1 };
 
     options.add_options()
@@ -77,6 +78,7 @@ int main(int argc, char** argv)
         ("t,track", "Track number to use", cxxopts::value(trackNumber))
         ("oversampling", "Internal oversampling factor", cxxopts::value(oversampling))
         ("v,verbose", "Verbose output", cxxopts::value(verbose))
+        ("log", "Produce logs", cxxopts::value(log))
         ("use-eot", "End the rendering at the last End of Track Midi message", cxxopts::value(useEOT))
         ("h,help", "Show help", cxxopts::value(help))
     ;
@@ -137,6 +139,9 @@ int main(int argc, char** argv)
     synth.setSamplesPerBlock(blockSize);
     synth.setSampleRate(sampleRate);
     synth.enableFreeWheeling();
+
+    if (log)
+        synth.enableLogging();
     
     if (!synth.setOversamplingFactor(oversampling)) {
         LOG_ERROR("Bad oversampling factor: " << oversampling);
@@ -184,6 +189,7 @@ int main(int argc, char** argv)
     double blockStartTime { 0 };
     double blockSizeInSeconds { blockSize / sampleRateDouble };
     int numFramesWritten { 0 };
+    int lastBlockSize { 0 };
     std::vector<float> leftBuffer (blockSize);
     std::vector<float> rightBuffer (blockSize);
     std::vector<float> interleavedBuffer (2 * blockSize);
@@ -194,12 +200,9 @@ int main(int argc, char** argv)
         const auto midiEvent = midiFile.getEvent(trackIdx, evIdx);
         const auto sampleIndex = static_cast<int>(midiEvent.seconds * sampleRateDouble);
         if (sampleIndex > nextBlockSentinel) {
-            synth.renderBlock(outputBuffers.data(), blockSize);
-            
+            synth.renderBlock(outputBuffers.data(), blockSize);            
             writeInterleaved(leftBuffer, rightBuffer, interleavedBuffer);
-
             numFramesWritten += outputFile.writef(interleavedBuffer.data(), blockSize);
-            // Avoid absorption, if any, by keeping the counter integer until the end
             blockStartTime = static_cast<double>(nextBlockSentinel) / sampleRateDouble; 
             nextBlockSentinel += blockSize;
         } else {
@@ -211,22 +214,37 @@ int main(int argc, char** argv)
                 synth.noteOff(delay, midiEvent.getKeyNumber(), midiEvent.getVelocity());
             }
             else if (midiEvent.isController()) {
-                synth.noteOn(delay, midiEvent.getControllerNumber(), midiEvent.getControllerValue());
+                synth.cc(delay, midiEvent.getControllerNumber(), midiEvent.getControllerValue());
             }
             else if (midiEvent.isPitchbend()) {
                 synth.pitchWheel(delay, buildAndCenterPitch(midiEvent[1], midiEvent[2]));
             }
-            else {
-                LOG_INFO("Unhandled event at delay " << delay << " " << +midiEvent[0] << " " << +midiEvent[1] ) 
+            else if (midiEvent.isEndOfTrack()) {
+                lastBlockSize = delay;
+                LOG_INFO("End of track at " << midiEvent.seconds << " seconds");
             }
-            
+            else {
+                LOG_INFO("Unhandled event at delay " << delay << "; Bytes: " 
+                    << std::hex << std::setfill('0') << std::setw(2) << +midiEvent[0] << " "
+                    << std::hex << std::setfill('0') << std::setw(2) << +midiEvent[1] ); 
+            }
             evIdx++;
         }
     }
-
-    if (!useEOT) {
+    
+    if (useEOT) {
+        if (lastBlockSize > 0) {
+            synth.renderBlock(outputBuffers.data(), lastBlockSize);
+            leftBuffer.resize(lastBlockSize);  
+            rightBuffer.resize(lastBlockSize);  
+            interleavedBuffer.resize(2 * lastBlockSize);  
+            writeInterleaved(leftBuffer, rightBuffer, interleavedBuffer);
+            numFramesWritten += outputFile.writef(interleavedBuffer.data(), lastBlockSize);
+            blockStartTime += lastBlockSize / sampleRateDouble;
+        }
+    } else {
         auto averagePower = meanSquared(interleavedBuffer);
-        while (averagePower > 1e-12f || nextBlockSentinel == blockSize) {
+        while ( averagePower > 1e-12f || nextBlockSentinel == blockSize) {
             synth.renderBlock(outputBuffers.data(), blockSize);
             writeInterleaved(leftBuffer, rightBuffer, interleavedBuffer);
             numFramesWritten += outputFile.writef(interleavedBuffer.data(), blockSize);

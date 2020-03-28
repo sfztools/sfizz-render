@@ -66,7 +66,6 @@ int main(int argc, char** argv)
     bool verbose { false };
     bool help { false };
     bool useEOT { false };
-    bool log { false };
     int oversampling { 1 };
 
     options.add_options()
@@ -78,7 +77,7 @@ int main(int argc, char** argv)
         ("t,track", "Track number to use", cxxopts::value(trackNumber))
         ("oversampling", "Internal oversampling factor", cxxopts::value(oversampling))
         ("v,verbose", "Verbose output", cxxopts::value(verbose))
-        ("log", "Produce logs", cxxopts::value(log))
+        ("log", "Produce logs", cxxopts::value<std::string>())
         ("use-eot", "End the rendering at the last End of Track Midi message", cxxopts::value(useEOT))
         ("h,help", "Show help", cxxopts::value(help))
     ;
@@ -140,8 +139,8 @@ int main(int argc, char** argv)
     synth.setSampleRate(sampleRate);
     synth.enableFreeWheeling();
 
-    if (log)
-        synth.enableLogging();
+    if (params.count("log") > 0)
+        synth.enableLogging(params["log"].as<std::string>());
     
     if (!synth.setOversamplingFactor(oversampling)) {
         LOG_ERROR("Bad oversampling factor: " << oversampling);

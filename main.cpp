@@ -61,6 +61,7 @@ int main(int argc, char** argv)
     cxxopts::Options options("sfizz-render", "Render a midi file through an SFZ file using the sfizz library.");
 
     int blockSize { 1024 };
+    int numVoices { 256 };
     int sampleRate { 48000 };
     int trackNumber { -1 };
     bool verbose { false };
@@ -72,6 +73,7 @@ int main(int argc, char** argv)
         ("sfz", "SFZ file", cxxopts::value<std::string>())
         ("midi", "Input midi file", cxxopts::value<std::string>())
         ("wav", "Output wav file", cxxopts::value<std::string>())
+        ("voices", "Number of voices", cxxopts::value(numVoices))
         ("b,blocksize", "Block size for the sfizz callbacks", cxxopts::value(blockSize))
         ("s,samplerate", "Output sample rate", cxxopts::value(sampleRate))
         ("t,track", "Track number to use", cxxopts::value(trackNumber))
@@ -128,15 +130,22 @@ int main(int argc, char** argv)
         LOG_INFO("Output file " << outputPath.string() << " already exists and will be erased.");
     }
 
+    if (numVoices < 1) {
+        LOG_ERROR("The number of voices must be higher than 1");
+        std::exit(-1);
+    }
+
     LOG_INFO("SFZ file:    " << sfzPath.string());
     LOG_INFO("MIDI file:   " << midiPath.string());
     LOG_INFO("Output file: " << outputPath.string());
     LOG_INFO("Block size: " << blockSize);
     LOG_INFO("Sample rate: " << sampleRate);
+    LOG_INFO("Voices: " << numVoices);
  
     sfz::Sfizz synth;
     synth.setSamplesPerBlock(blockSize);
     synth.setSampleRate(sampleRate);
+    synth.setNumVoices(numVoices);
     synth.enableFreeWheeling();
 
     if (params.count("log") > 0)

@@ -1,5 +1,7 @@
 # sfizz-render
 
+**sfizz-render is bundled in https://github.com/sfztools/sfizz**
+
 ## Building and installing
 
 `sfizz-render` requires the `sndfile` library ; on Debian-based systems, you can install `libsndfile1-dev`.

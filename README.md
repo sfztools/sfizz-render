@@ -1,6 +1,6 @@
 # sfizz-render
 
-**sfizz-render is bundled in https://github.com/sfztools/sfizz**
+**sfizz-render now is bundled in https://github.com/sfztools/sfizz**
 
 ## Building and installing
 
